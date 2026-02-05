@@ -1,72 +1,61 @@
 import React from 'react';
 
 /**
- * ChatTopBar — la barre en haut de la fenêtre de chat.
+ * ChatTopBar — barre supérieure du chat (Tailwind pur, design Chatvia).
  *
- * Affiche :
- * - Un bouton retour (flèche ←)
- * - Un avatar avec les initiales de l'autre utilisateur
- * - Le nom de l'autre utilisateur
- * - Un bouton "..." pour les actions futures
- *
- * Props :
- * - conversation : la conversation active (contient la liste des users)
- * - authUser     : l'utilisateur connecté (pour identifier "l'autre")
- * - onBack       : fonction appelée quand on clique sur le bouton retour
+ * Mobile : affiche un bouton retour ← pour revenir à la liste.
+ * Desktop : pas de bouton retour (les 2 panneaux sont visibles).
  */
 export default function ChatTopBar({ conversation, authUser, onBack }) {
-    // Si pas de conversation ou pas d'utilisateur → ne rien afficher
     if (!conversation || !authUser) return null;
 
-    // Trouver l'AUTRE utilisateur dans la conversation (celui qui n'est pas moi)
-    // .find() parcourt le tableau et retourne le premier élément qui match la condition
-    const otherUser = conversation.users?.find(
-        user => user.id !== authUser.id
-    );
-
-    // Générer les initiales pour l'avatar (ex: "Jean Dupont" → "JD")
-    // 1. Prendre le nom (ou "?" si pas de nom)
-    // 2. split(' ') → couper par les espaces → ["Jean", "Dupont"]
-    // 3. map(w => w[0]) → prendre la première lettre de chaque mot → ["J", "D"]
-    // 4. join('') → joindre → "JD"
-    // 5. toUpperCase() → mettre en majuscules
-    // 6. slice(0, 2) → garder max 2 caractères
-    const initials = (otherUser?.name || '?')
-        .split(' ')
-        .map(w => w[0])
-        .join('')
-        .toUpperCase()
-        .slice(0, 2);
+    const otherUser = conversation.users?.find(u => u.id !== authUser.id);
+    const displayName = otherUser?.name || conversation.title || 'Conversation';
+    const initials = (displayName || '?')
+        .split(' ').map(w => w[0]).join('').toUpperCase().slice(0, 2);
 
     return (
-        <div className="flex items-center justify-between p-3 border-b bg-white shadow-sm">
-            {/* Bouton retour : flèche gauche (← en HTML = &larr;) */}
-            <button
-                onClick={onBack}
-                className="text-gray-600 hover:text-gray-800 mr-3"
-            >
-                &larr;
-            </button>
+        <div className="flex items-center justify-between px-4 lg:px-6 py-3 border-b border-gray-200 dark:border-gray-700 bg-white dark:bg-chatvia-sidebar-dark flex-shrink-0">
 
-            {/* Avatar (rond bleu avec initiales) + Nom de l'utilisateur */}
-            <div className="flex items-center space-x-3 flex-1">
-                {/* Avatar : cercle bleu avec les initiales en blanc */}
-                <div className="w-10 h-10 rounded-full bg-blue-500 text-white flex items-center justify-center font-semibold text-sm">
+            {/* Gauche : bouton retour (mobile) + avatar + nom */}
+            <div className="flex items-center gap-3">
+                {/* Bouton retour — visible seulement sur mobile */}
+                {onBack && (
+                    <button
+                        onClick={onBack}
+                        className="lg:hidden w-9 h-9 rounded-lg flex items-center justify-center text-chatvia-muted hover:text-chatvia-primary hover:bg-chatvia-primary/10 transition-colors -ml-1"
+                    >
+                        <i className="ri-arrow-left-s-line text-2xl"></i>
+                    </button>
+                )}
+
+                <div className="w-10 h-10 rounded-full bg-chatvia-primary text-white flex items-center justify-center text-sm font-semibold">
                     {initials}
                 </div>
                 <div>
-                    {/* Nom de l'autre utilisateur */}
-                    <div className="font-semibold leading-tight">
-                        {otherUser?.name || 'Unknown'}
-                    </div>
+                    <h5 className="text-base font-semibold text-gray-800 dark:text-gray-100 truncate">
+                        {displayName}
+                    </h5>
                 </div>
             </div>
 
-            {/* Bouton d'actions (... = &hellip; en HTML) — placeholder pour le futur */}
-            <div className="flex items-center">
-                <button className="text-gray-600 hover:text-gray-800 text-xl">
-                    &hellip;
-                </button>
+            {/* Droite : icônes d'action */}
+            <div className="flex items-center gap-1">
+                {[
+                    { icon: 'ri-search-line', title: 'Rechercher' },
+                    { icon: 'ri-phone-line', title: 'Appel audio' },
+                    { icon: 'ri-vidicon-line', title: 'Appel vidéo' },
+                    { icon: 'ri-user-2-line', title: 'Profil' },
+                ].map(btn => (
+                    <button
+                        key={btn.icon}
+                        type="button"
+                        title={btn.title}
+                        className="w-9 h-9 rounded-lg flex items-center justify-center text-chatvia-muted hover:text-chatvia-primary hover:bg-chatvia-primary/10 transition-colors"
+                    >
+                        <i className={`${btn.icon} text-lg`}></i>
+                    </button>
+                ))}
             </div>
         </div>
     );

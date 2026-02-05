@@ -7,11 +7,13 @@
 
         <title inertia>{{ config('app.name', 'Laravel') }}</title>
 
-        <!-- Fonts -->
-        <link rel="preconnect" href="https://fonts.bunny.net">
-        <link href="https://fonts.bunny.net/css?family=figtree:400,500,600&display=swap" rel="stylesheet" />
+        <!-- Favicon -->
+        <link rel="shortcut icon" href="/chatvia/images/favicon.ico">
 
-        <!-- Scripts -->
+        <!-- Remix Icons (polices d'icônes ri-*) -->
+        <link href="/chatvia/css/icons.min.css" rel="stylesheet" type="text/css" />
+
+        <!-- Scripts (Vite + Inertia + Tailwind) -->
         @routes
         @viteReactRefresh
         @vite(['resources/js/app.jsx', "resources/js/Pages/{$page['component']}.jsx"])

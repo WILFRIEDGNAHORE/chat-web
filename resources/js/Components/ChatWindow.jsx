@@ -3,161 +3,157 @@ import axios from 'axios';
 import ChatTopBar from './ChatTopBar';
 
 /**
- * ChatWindow — la fenêtre de chat principale (partie droite de l'écran).
+ * ChatWindow — zone de chat (Tailwind pur, design Chatvia).
  *
- * Affiche :
- * - La barre supérieure (ChatTopBar) avec le nom de l'autre utilisateur
- * - La liste des messages (mes messages à droite en bleu, les autres à gauche en gris)
- * - L'indicateur "est en train d'écrire..."
- * - Le formulaire d'envoi de message
- *
- * Props reçues du parent (ChatHome) :
- * - conversation : la conversation ouverte
- * - messages     : la liste des messages à afficher
- * - typingUsers  : les noms des utilisateurs qui tapent
- * - authUser     : l'utilisateur connecté (moi)
- * - onNewMessage : fonction à appeler quand j'envoie un message
- * - onBack       : fonction pour revenir à la liste (mobile)
+ * Desktop : flex-1 visible en permanence à droite.
+ * Mobile  : overlay plein écran, glisse depuis la droite (translate-x).
  */
-export default function ChatWindow({ conversation, messages, typingUsers, authUser, onNewMessage, onBack }) {
-    // Référence vers un div invisible en bas de la liste → permet de scroller automatiquement
+export default function ChatWindow({ conversation, messages, typingUsers, authUser, onNewMessage, mobileShow, onBack }) {
     const scrollRef = useRef();
-    // Le texte en cours de saisie dans l'input
     const [content, setContent] = useState('');
-    // Timer pour le throttle du typing (limite à 1 requête par seconde)
     const typingTimerRef = useRef(null);
 
-    // Scroll automatique vers le bas à chaque nouveau message
-    // useEffect se relance à chaque changement de la liste "messages"
     useEffect(() => {
         scrollRef.current?.scrollIntoView({ behavior: 'smooth' });
     }, [messages]);
 
-    /**
-     * Envoyer un message quand le formulaire est soumis.
-     * 1. Empêche le rechargement de la page (e.preventDefault)
-     * 2. Vérifie que le message n'est pas vide
-     * 3. Envoie le message au serveur via POST /messages/send
-     * 4. Ajoute le message localement via onNewMessage (pas besoin d'attendre Pusher)
-     * 5. Vide le champ de saisie
-     */
     const handleSend = async (e) => {
-        e.preventDefault(); // Empêcher le rechargement de la page
-        if (!content.trim() || !conversation) return; // Message vide → ne rien faire
-
+        e.preventDefault();
+        if (!content.trim() || !conversation) return;
         try {
-            // Envoyer le message au serveur Laravel
             const res = await axios.post('/messages/send', {
                 conversation_id: conversation.id,
-                content: content.trim(), // Supprimer les espaces avant/après
+                content: content.trim(),
             });
-
-            // Informer le parent (ChatHome) du nouveau message pour l'afficher
             if (onNewMessage) onNewMessage(res.data.message);
-            setContent(''); // Vider le champ de saisie
+            setContent('');
         } catch (err) {
             console.error(err);
         }
     };
 
-    /**
-     * Envoyer l'indicateur "est en train d'écrire" avec un throttle.
-     *
-     * Throttle = limiter à 1 requête maximum par seconde.
-     * Sans ça, chaque touche du clavier enverrait une requête HTTP
-     * (taper "bonjour" = 7 requêtes → surcharge inutile du serveur).
-     *
-     * Fonctionnement :
-     * 1. Si un timer est déjà en cours → ne rien faire (on a déjà envoyé récemment)
-     * 2. Sinon → envoyer la requête et démarrer un timer de 1 seconde
-     * 3. Quand le timer expire → permettre un nouvel envoi
-     *
-     * useCallback = mémoriser la fonction pour éviter de la recréer à chaque rendu
-     */
     const handleTyping = useCallback(() => {
-        if (!conversation || typingTimerRef.current) return; // Timer actif → ignorer
-
-        // Démarrer un timer : pendant 1s, les prochains appels seront ignorés
-        typingTimerRef.current = setTimeout(() => {
-            typingTimerRef.current = null; // Timer expiré → autoriser un nouvel envoi
-        }, 1000);
-
-        // Envoyer la requête POST /typing au serveur
-        // .catch(() => {}) = ignorer silencieusement les erreurs (c'est pas grave si ça échoue)
+        if (!conversation || typingTimerRef.current) return;
+        typingTimerRef.current = setTimeout(() => { typingTimerRef.current = null; }, 1000);
         axios.post('/typing', { conversation_id: conversation.id }).catch(() => {});
     }, [conversation]);
 
-    // Nettoyer le timer quand le composant est détruit (éviter les fuites mémoire)
     useEffect(() => {
-        return () => {
-            if (typingTimerRef.current) clearTimeout(typingTimerRef.current);
-        };
+        return () => { if (typingTimerRef.current) clearTimeout(typingTimerRef.current); };
     }, []);
 
-    // Écran de chargement si l'utilisateur n'est pas encore disponible
-    if (!authUser) return <div>Chargement...</div>;
+    const formatTime = (dateStr) => {
+        if (!dateStr) return '';
+        return new Date(dateStr).toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' });
+    };
+
+    const getInitials = (name) =>
+        (name || '?').split(' ').map(w => w[0]).join('').toUpperCase().slice(0, 2);
+
+    if (!authUser) return <div className="flex-1 flex items-center justify-center text-chatvia-muted">Chargement...</div>;
+
+    // Écran d'accueil (desktop seulement — sur mobile la sidebar est visible)
+    if (!conversation) {
+        return (
+            <div className="hidden lg:flex flex-1 flex-col items-center justify-center h-full text-chatvia-muted bg-white dark:bg-chatvia-dark-bg">
+                <i className="ri-chat-3-line text-6xl mb-4"></i>
+                <h5 className="text-lg font-medium text-gray-500 dark:text-gray-400">Sélectionnez une conversation</h5>
+                <p className="text-sm mt-1">Choisissez un contact dans la liste pour commencer</p>
+            </div>
+        );
+    }
 
     return (
-        <div className="w-2/3 flex flex-col border-l">
-            {/* Barre supérieure : nom de l'autre utilisateur + bouton retour */}
-            <ChatTopBar
-                conversation={conversation}
-                authUser={authUser}
-                onBack={onBack}
-            />
+        <div className={`
+            fixed inset-0 z-50 bg-white dark:bg-chatvia-dark-bg
+            flex flex-col
+            transition-transform duration-300 ease-in-out
+            ${mobileShow ? 'translate-x-0' : 'translate-x-full'}
+            lg:static lg:translate-x-0 lg:z-auto lg:flex-1
+        `}>
 
-            {/* Zone des messages (scrollable) */}
-            <div className="flex-1 flex flex-col p-2 overflow-y-auto">
-                {/* Boucle sur chaque message pour l'afficher */}
-                {messages.map(msg => (
-                    <div
-                        key={msg.id} // Clé unique pour React (obligatoire dans les boucles)
-                        // Si c'est MON message → aligné à droite, sinon à gauche
-                        className={`mb-2 ${msg.user_id === authUser.id ? 'text-right' : 'text-left'}`}
-                    >
-                        <div className={`inline-block px-3 py-1 rounded-lg ${
-                            msg.user_id === authUser.id ? 'bg-blue-200' : 'bg-gray-200'
-                        }`}>
-                            {/* Nom de l'auteur en gras */}
-                            <span className="font-bold">{msg.user?.name || 'Unknown'}: </span>
-                            {/* Contenu du message */}
-                            {msg.content}
+            {/* Top bar avec bouton retour sur mobile */}
+            <ChatTopBar conversation={conversation} authUser={authUser} onBack={onBack} />
+
+            {/* Zone des messages */}
+            <div className="flex-1 overflow-y-auto p-4 lg:p-6 space-y-4 pb-[60px] lg:pb-4">
+                {messages.map((msg, index) => {
+                    const isMine = msg.user_id === authUser.id;
+                    const senderName = msg.user?.name || 'Unknown';
+
+                    return (
+                        <div key={msg.id || index} className={`flex ${isMine ? 'justify-end' : 'justify-start'}`}>
+                            <div className={`flex gap-2.5 max-w-[75%] ${isMine ? 'flex-row-reverse' : ''}`}>
+
+                                {!isMine && (
+                                    <div className="w-8 h-8 rounded-full bg-chatvia-info text-white flex items-center justify-center text-[10px] font-semibold flex-shrink-0 mt-5">
+                                        {getInitials(senderName)}
+                                    </div>
+                                )}
+
+                                <div>
+                                    <p className={`text-xs text-chatvia-muted mb-1 ${isMine ? 'text-right' : ''}`}>
+                                        {isMine ? 'Vous' : senderName}
+                                    </p>
+
+                                    <div className={`
+                                        inline-block px-4 py-2.5 rounded-lg
+                                        ${isMine
+                                            ? 'bg-chatvia-primary text-white rounded-br-none'
+                                            : 'bg-chatvia-sidebar dark:bg-chatvia-dark text-gray-800 dark:text-gray-200 rounded-bl-none'
+                                        }
+                                    `}>
+                                        <p className="text-sm whitespace-pre-wrap break-words">{msg.content}</p>
+                                        <p className={`text-[10px] mt-1 ${isMine ? 'text-white/70' : 'text-chatvia-muted'}`}>
+                                            <i className="ri-time-line mr-0.5"></i>
+                                            {formatTime(msg.created_at)}
+                                        </p>
+                                    </div>
+                                </div>
+                            </div>
                         </div>
-                    </div>
-                ))}
+                    );
+                })}
 
-                {/* Indicateur de typing : affiché quand quelqu'un tape */}
+                {/* Typing indicator */}
                 {typingUsers.length > 0 && (
-                    <div className="text-gray-500 text-sm">
-                        {typingUsers.join(', ')} est en train d'écrire...
+                    <div className="flex justify-start">
+                        <div className="flex gap-2.5 max-w-[75%]">
+                            <div className="w-8 h-8 rounded-full bg-chatvia-info text-white flex items-center justify-center text-[10px] font-semibold flex-shrink-0">
+                                {getInitials(typingUsers[0])}
+                            </div>
+                            <div className="bg-chatvia-sidebar dark:bg-chatvia-dark px-4 py-3 rounded-lg rounded-bl-none">
+                                <div className="flex items-center gap-1">
+                                    <span className="animate-dot w-1.5 h-1.5 rounded-full bg-chatvia-muted" style={{ animationDelay: '0s' }}></span>
+                                    <span className="animate-dot w-1.5 h-1.5 rounded-full bg-chatvia-muted" style={{ animationDelay: '0.2s' }}></span>
+                                    <span className="animate-dot w-1.5 h-1.5 rounded-full bg-chatvia-muted" style={{ animationDelay: '0.4s' }}></span>
+                                </div>
+                            </div>
+                        </div>
                     </div>
                 )}
 
-                {/* Div invisible en bas → cible du scroll automatique */}
                 <div ref={scrollRef}></div>
             </div>
 
-            {/* Formulaire d'envoi de message (affiché seulement si une conversation est ouverte) */}
-            {conversation && (
-                <form className="flex p-2 border-t" onSubmit={handleSend}>
+            {/* Zone d'envoi — mb-[60px] sur mobile pour la tab bar */}
+            <div className="px-4 lg:px-6 py-3 mb-[60px] lg:mb-0 border-t border-gray-200 dark:border-gray-700 bg-white dark:bg-chatvia-sidebar-dark">
+                <form onSubmit={handleSend} className="flex items-center gap-2">
                     <input
                         type="text"
-                        className="flex-1 border rounded px-2 py-1"
+                        className="flex-1 bg-chatvia-sidebar dark:bg-chatvia-dark border-none rounded-lg px-4 py-2.5 text-sm text-gray-800 dark:text-gray-200 placeholder-chatvia-muted focus:outline-none focus:ring-2 focus:ring-chatvia-primary/30"
                         placeholder="Tapez un message..."
                         value={content}
-                        onChange={(e) => {
-                            setContent(e.target.value);  // Mettre à jour le texte saisi
-                            handleTyping();               // Envoyer l'indicateur de typing (throttlé)
-                        }}
+                        onChange={(e) => { setContent(e.target.value); handleTyping(); }}
                     />
                     <button
                         type="submit"
-                        className="ml-2 bg-blue-500 text-white px-4 rounded hover:bg-blue-600 transition"
+                        className="w-10 h-10 rounded-lg bg-chatvia-primary text-white flex items-center justify-center hover:bg-chatvia-primary-hover transition-colors flex-shrink-0"
                     >
-                        Envoyer
+                        <i className="ri-send-plane-2-fill text-lg"></i>
                     </button>
                 </form>
-            )}
+            </div>
         </div>
     );
 }

@@ -3,48 +3,58 @@ import Pusher from 'pusher-js';
 import axios from 'axios';
 import ChatSidebar from '../Components/ChatSidebar';
 import ChatWindow from '../Components/ChatWindow';
-import AppLayout from '../Layouts/AppLayout';
 
 /**
- * ChatHome — composant principal de la page de chat.
+ * ChatHome — composant principal (Tailwind pur, design Chatvia).
  *
- * Ce composant reçoit ses données initiales depuis Laravel (via Inertia) :
- * - conversations     : la liste des conversations pour la sidebar
- * - activeConversation : la conversation actuellement ouverte (ou null)
- * - messages           : les messages de la conversation ouverte
- * - auth_user          : l'utilisateur connecté
+ * Desktop :
+ * ┌──────────┬──────────────────┬──────────────────────────┐
+ * │ side-menu│ chat-leftsidebar │       user-chat          │
+ * │  75px    │    380px         │      flex-1              │
+ * └──────────┴──────────────────┴──────────────────────────┘
  *
- * Il gère aussi la connexion temps réel avec Pusher pour recevoir
- * les nouveaux messages et les indicateurs de typing en direct.
+ * Mobile :
+ * ┌──────────────────┐     ┌──────────────────┐
+ * │ Liste des conv   │ ──→ │ ← TopBar         │  (slide-in)
+ * │ (pleine largeur) │ ←── │   Messages       │  (slide-out)
+ * ├──────────────────┤     │   Input          │
+ * │ 🗨  🌙  👤      │     ├──────────────────┤
+ * └──────────────────┘     │ 🗨  🌙  👤      │
+ *   bottom tab bar         └──────────────────┘
  */
 export default function ChatHome({ conversations, activeConversation, messages, auth_user }) {
-    // === ÉTAT LOCAL (state) ===
     const [activeConv, setActiveConv] = useState(activeConversation || null);
     const [msgs, setMsgs] = useState(messages || []);
     const [convList, setConvList] = useState(conversations || []);
     const [typingUsers, setTypingUsers] = useState([]);
+    const [darkMode, setDarkMode] = useState(false);
+    const [dropdownOpen, setDropdownOpen] = useState(false);
+    // Mobile : contrôle l'affichage du chat (slide-in/out)
+    const [mobileShowChat, setMobileShowChat] = useState(false);
 
-    // useRef pour garder l'instance Pusher et l'ID de la conversation active
-    // sans déclencher de re-rendu quand ils changent
     const pusherRef = useRef(null);
     const activeConvRef = useRef(activeConv);
 
-    // Garder activeConvRef synchronisé avec activeConv
-    // Pour que les callbacks Pusher (qui capturent la ref au moment du bind)
-    // aient toujours accès à la valeur courante
-    useEffect(() => {
-        activeConvRef.current = activeConv;
-    }, [activeConv]);
+    useEffect(() => { activeConvRef.current = activeConv; }, [activeConv]);
 
-    // === EFFET 1 : Initialiser Pusher (une seule fois) ===
+    // Dark mode
+    useEffect(() => {
+        document.documentElement.classList.toggle('dark', darkMode);
+    }, [darkMode]);
+
+    // Fermer dropdown au clic extérieur
+    useEffect(() => {
+        if (!dropdownOpen) return;
+        const close = () => setDropdownOpen(false);
+        document.addEventListener('click', close);
+        return () => document.removeEventListener('click', close);
+    }, [dropdownOpen]);
+
+    // === Pusher init ===
     useEffect(() => {
         if (!auth_user) return;
-
         const csrfToken = document.querySelector('meta[name="csrf-token"]')?.content;
-        if (!csrfToken) {
-            console.error('Meta CSRF token introuvable !');
-            return;
-        }
+        if (!csrfToken) return;
 
         pusherRef.current = new Pusher(import.meta.env.VITE_PUSHER_APP_KEY, {
             cluster: import.meta.env.VITE_PUSHER_APP_CLUSTER,
@@ -52,40 +62,25 @@ export default function ChatHome({ conversations, activeConversation, messages, 
             auth: { headers: { 'X-CSRF-TOKEN': csrfToken } },
         });
 
-        // Quand Pusher est connecté, envoyer le Socket ID avec chaque requête axios.
-        // C'est ce qui permet à toOthers() côté Laravel de savoir qui est l'émetteur
-        // et de NE PAS lui renvoyer son propre message via Pusher.
-        // Sans ça, l'émetteur reçoit le message 2 fois (HTTP + WebSocket).
         pusherRef.current.connection.bind('connected', () => {
             axios.defaults.headers.common['X-Socket-ID'] = pusherRef.current.connection.socket_id;
         });
 
-        return () => {
-            pusherRef.current?.disconnect();
-            pusherRef.current = null;
-        };
+        return () => { pusherRef.current?.disconnect(); pusherRef.current = null; };
     }, [auth_user]);
 
-    // === EFFET 2 : S'abonner à TOUTES les conversations pour la sidebar ===
-    // Quand un message arrive dans N'IMPORTE quelle conversation,
-    // on met à jour le dernier message et le compteur de non-lus dans la sidebar.
-    // Si c'est la conversation active, on ajoute aussi le message au chat.
+    // === S'abonner à TOUTES les conversations ===
     useEffect(() => {
         if (!pusherRef.current || !convList.length) return;
-
         const channels = [];
 
         convList.forEach(conv => {
             const channel = pusherRef.current.subscribe(`private-conversation.${conv.id}`);
             channels.push({ id: conv.id, channel });
 
-            // Écouter les nouveaux messages sur CHAQUE conversation
             channel.bind('App\\Events\\MessageSent', (data) => {
-                // Mettre à jour la sidebar : dernier message + compteur non-lus
                 setConvList(prev => prev.map(c => {
                     if (c.id !== data.conversation_id) return c;
-
-                    // Si c'est la conversation active → pas de non-lu (on la regarde déjà)
                     const isActive = activeConvRef.current?.id === data.conversation_id;
                     return {
                         ...c,
@@ -93,18 +88,14 @@ export default function ChatHome({ conversations, activeConversation, messages, 
                         unread_count: isActive ? c.unread_count : (c.unread_count || 0) + 1,
                     };
                 }));
-
-                // Si le message concerne la conversation ouverte → l'afficher dans le chat
                 if (activeConvRef.current?.id === data.conversation_id) {
-                    const msgWithUser = {
+                    setMsgs(prev => [...prev, {
                         ...data,
                         user: { id: data.user?.id, name: data.user?.name || 'Unknown' },
-                    };
-                    setMsgs(prev => [...prev, msgWithUser]);
+                    }]);
                 }
             });
 
-            // Écouter le typing uniquement sur la conversation active
             channel.bind('App\\Events\\Typing', (data) => {
                 if (activeConvRef.current?.id === conv.id && data.user_id !== auth_user.id) {
                     setTypingUsers([data.user_name]);
@@ -113,19 +104,14 @@ export default function ChatHome({ conversations, activeConversation, messages, 
             });
         });
 
-        // Cleanup : se désabonner de tout quand la liste change
         return () => {
             channels.forEach(({ id, channel }) => {
                 channel.unbind_all();
                 pusherRef.current?.unsubscribe(`private-conversation.${id}`);
             });
         };
-    }, [convList.length, auth_user]); // Se relance si le nombre de conversations change
+    }, [convList.length, auth_user]);
 
-    /**
-     * Charger les messages d'une conversation depuis le serveur.
-     * Appelé quand l'utilisateur clique sur une conversation dans la sidebar.
-     */
     const loadMessages = async (conversation) => {
         try {
             const res = await axios.get(`/conversations/${conversation.id}/messages`);
@@ -135,43 +121,118 @@ export default function ChatHome({ conversations, activeConversation, messages, 
         }
     };
 
-    if (!auth_user) return <div>Chargement...</div>;
+    const handleLogout = (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        axios.post('/logout').then(() => { window.location.href = '/login'; });
+    };
+
+    // Sélectionner une conversation (+ ouvrir le chat sur mobile)
+    const handleSelectConv = (conv) => {
+        setActiveConv(conv);
+        loadMessages(conv);
+        setConvList(prev => prev.map(c =>
+            c.id === conv.id ? { ...c, unread_count: 0 } : c
+        ));
+        setMobileShowChat(true);
+    };
+
+    // Retour à la liste (mobile)
+    const handleBack = () => {
+        setMobileShowChat(false);
+    };
+
+    if (!auth_user) return <div className="flex items-center justify-center h-screen text-chatvia-muted">Chargement...</div>;
+
+    const userInitials = (auth_user.name || '?')
+        .split(' ').map(w => w[0]).join('').toUpperCase().slice(0, 2);
 
     return (
-        <AppLayout>
-            <div className="flex h-[80vh] border rounded">
+        <div className="flex h-screen bg-white dark:bg-chatvia-dark-bg overflow-hidden">
 
-                {/* Sidebar : liste des conversations */}
-                <ChatSidebar
-                    conversations={convList}
-                    onSelect={(conv) => {
-                        setActiveConv(conv);
-                        loadMessages(conv);
-                        // Remettre le compteur de non-lus à 0 pour cette conversation
-                        setConvList(prev => prev.map(c =>
-                            c.id === conv.id ? { ...c, unread_count: 0 } : c
-                        ));
-                    }}
-                />
+            {/* ====== SIDE MENU — Desktop: colonne gauche 75px | Mobile: barre en bas 60px ====== */}
+            <div className={`
+                fixed bottom-0 left-0 right-0 z-40 h-[60px] border-t border-gray-200 dark:border-gray-700
+                bg-chatvia-sidebar dark:bg-chatvia-sidebar-dark
+                flex items-center justify-around
+                lg:static lg:h-auto lg:w-sidebar lg:min-w-sidebar lg:flex-col lg:items-center
+                lg:border-t-0 lg:border-r lg:justify-start
+            `}>
+                {/* Logo — desktop seulement */}
+                <div className="hidden lg:block py-5">
+                    <a href="/">
+                        <img src="/chatvia/images/logo-dark.png" alt="Logo" className="h-7 dark:hidden" />
+                        <img src="/chatvia/images/logo-light.png" alt="Logo" className="h-7 hidden dark:block" />
+                    </a>
+                </div>
 
-                {/* Fenêtre de chat : messages + formulaire d'envoi */}
-                <ChatWindow
-                    conversation={activeConv}
-                    messages={msgs}
-                    typingUsers={typingUsers}
-                    authUser={auth_user}
-                    onNewMessage={(msg) => {
-                        setMsgs(prev => [...prev, msg]);
-                        setConvList(prev =>
-                            prev.map(c =>
-                                c.id === msg.conversation_id
-                                    ? { ...c, last_message: msg.content }
-                                    : c
-                            )
-                        );
-                    }}
-                />
+                {/* Icônes — horizontales mobile, verticales desktop */}
+                <nav className="flex items-center gap-1 lg:flex-1 lg:flex-col lg:gap-2 lg:mt-4">
+                    {/* Chat */}
+                    <button className="w-12 h-12 lg:w-10 lg:h-10 rounded-lg flex items-center justify-center bg-chatvia-primary/10 text-chatvia-primary">
+                        <i className="ri-message-3-line text-xl"></i>
+                    </button>
+
+                    {/* Dark/Light Mode */}
+                    <button
+                        onClick={() => setDarkMode(!darkMode)}
+                        className="w-12 h-12 lg:w-10 lg:h-10 rounded-lg flex items-center justify-center text-chatvia-muted hover:text-chatvia-primary hover:bg-chatvia-primary/10 transition-colors"
+                    >
+                        <i className={`text-xl ${darkMode ? 'ri-sun-line' : 'ri-moon-clear-line'}`}></i>
+                    </button>
+                </nav>
+
+                {/* Avatar + Logout */}
+                <div className="relative lg:pb-5">
+                    <button
+                        onClick={(e) => { e.stopPropagation(); setDropdownOpen(!dropdownOpen); }}
+                        className="w-10 h-10 lg:w-9 lg:h-9 rounded-full bg-chatvia-primary text-white flex items-center justify-center text-xs font-semibold"
+                    >
+                        {userInitials}
+                    </button>
+
+                    {dropdownOpen && (
+                        <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 w-40 bg-white dark:bg-chatvia-dark-card rounded-lg shadow-lg border border-gray-200 dark:border-gray-700 py-1 z-50">
+                            <a
+                                href="#"
+                                onClick={handleLogout}
+                                className="flex items-center justify-between px-4 py-2 text-sm text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-chatvia-dark"
+                            >
+                                Déconnexion
+                                <i className="ri-logout-circle-r-line text-chatvia-muted"></i>
+                            </a>
+                        </div>
+                    )}
+                </div>
             </div>
-        </AppLayout>
+
+            {/* ====== CHAT SIDEBAR — Desktop: 380px | Mobile: pleine largeur ====== */}
+            <ChatSidebar
+                conversations={convList}
+                authUser={auth_user}
+                activeConv={activeConv}
+                onSelect={handleSelectConv}
+            />
+
+            {/* ====== ZONE DE CHAT — Desktop: flex-1 visible | Mobile: overlay slide-in ====== */}
+            <ChatWindow
+                conversation={activeConv}
+                messages={msgs}
+                typingUsers={typingUsers}
+                authUser={auth_user}
+                mobileShow={mobileShowChat}
+                onBack={handleBack}
+                onNewMessage={(msg) => {
+                    setMsgs(prev => [...prev, msg]);
+                    setConvList(prev =>
+                        prev.map(c =>
+                            c.id === msg.conversation_id
+                                ? { ...c, last_message: msg.content }
+                                : c
+                        )
+                    );
+                }}
+            />
+        </div>
     );
 }
