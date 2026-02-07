@@ -39,6 +39,9 @@ Route::middleware('auth')->group(function () {
     Route::prefix('api/chat')->group(function () {
         Route::get('/{conversation}/messages', [\App\Http\Controllers\MessageController::class, 'index'])->name('api.chat.messages');
         Route::post('/{conversation}/messages', [\App\Http\Controllers\MessageController::class, 'store'])->name('api.chat.messages.store');
+        Route::delete('/{conversation}/messages/{message}', [\App\Http\Controllers\MessageController::class, 'destroy'])->name('api.chat.messages.destroy');
+        Route::get('/{conversation}/search', [\App\Http\Controllers\MessageController::class, 'search'])->name('api.chat.search');
+        Route::post('/{conversation}/messages/{message}/read', [\App\Http\Controllers\MessageController::class, 'markAsRead'])->name('api.chat.messages.read');
         Route::post('/{conversation}/typing', [\App\Http\Controllers\MessageController::class, 'typing'])->name('api.chat.typing');
     });
 

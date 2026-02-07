@@ -18,7 +18,7 @@ class MessageSent implements ShouldBroadcastNow
     public function __construct(Message $message)
     {
         $this->message = $message;
-        $this->message->load('user:id,name');
+        $this->message->load(['user:id,name', 'replyTo:id,user_id,content,type,deleted_at']);
     }
 
     /**
@@ -42,13 +42,33 @@ class MessageSent implements ShouldBroadcastNow
      */
     public function broadcastWith(): array
     {
-        return [
+        $data = [
             'id' => $this->message->id,
             'conversation_id' => $this->message->conversation_id,
             'user_id' => $this->message->user_id,
             'user_name' => $this->message->user->name,
             'content' => $this->message->content,
+            'type' => $this->message->type,
+            'file_path' => $this->message->file_path,
+            'file_name' => $this->message->file_name,
+            'file_type' => $this->message->file_type,
+            'file_size' => $this->message->file_size,
+            'file_url' => $this->message->file_url,
             'created_at' => $this->message->created_at->toISOString(),
+            'reply_to' => null,
         ];
+
+        if ($this->message->replyTo) {
+            $data['reply_to'] = [
+                'id' => $this->message->replyTo->id,
+                'user_id' => $this->message->replyTo->user_id,
+                'content' => $this->message->replyTo->trashed()
+                    ? 'Ce message a été supprimé'
+                    : $this->message->replyTo->content,
+                'type' => $this->message->replyTo->type,
+            ];
+        }
+
+        return $data;
     }
 }

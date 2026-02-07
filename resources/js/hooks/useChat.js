@@ -1,21 +1,16 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import axios from 'axios';
 
-/**
- * Custom hook for real-time chat functionality
- * Uses Echo for WebSocket communication
- */
-export default function useChat(conversationId) {
+export default function useChat(conversationId, currentUser = null) {
     const [messages, setMessages] = useState([]);
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState(null);
     const [typingUsers, setTypingUsers] = useState([]);
+    const [replyingTo, setReplyingTo] = useState(null);
+    const [readReceipts, setReadReceipts] = useState({});
     const typingTimeoutRef = useRef({});
     const typingThrottleRef = useRef(null);
 
-    /**
-     * Fetch messages for the conversation
-     */
     const fetchMessages = useCallback(async () => {
         if (!conversationId) return;
 
@@ -23,7 +18,6 @@ export default function useChat(conversationId) {
             setLoading(true);
             setError(null);
             const response = await axios.get(`/api/chat/${conversationId}/messages`);
-            // Cursor pagination returns data in desc order, reverse it
             const messagesData = response.data.data || [];
             setMessages(messagesData);
         } catch (err) {
@@ -34,29 +28,85 @@ export default function useChat(conversationId) {
         }
     }, [conversationId]);
 
-    /**
-     * Send a new message
-     */
-    const sendMessage = useCallback(async (content) => {
-        if (!conversationId || !content.trim()) return null;
+    const sendMessage = useCallback(async (content, file = null, fileType = null) => {
+        if (!conversationId) return null;
+        if (!content?.trim() && !file) return null;
+
+        const tempId = `temp-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+        const tempMessage = {
+            id: tempId,
+            conversation_id: conversationId,
+            user_id: currentUser?.id,
+            content: content?.trim() || (fileType === 'image' ? '📷 Image' : '📎 ' + file?.name),
+            type: fileType || 'text',
+            file_name: file?.name,
+            file_size: file?.size,
+            created_at: new Date().toISOString(),
+            user: { id: currentUser?.id, name: currentUser?.name },
+            reply_to: replyingTo ? {
+                id: replyingTo.id,
+                user_id: replyingTo.user_id,
+                content: replyingTo.content,
+                type: replyingTo.type,
+            } : null,
+            sending: true,
+        };
+
+        setMessages(prev => [...prev, tempMessage]);
+        const savedReplyingTo = replyingTo;
+        setReplyingTo(null);
 
         try {
-            const response = await axios.post(`/api/chat/${conversationId}/messages`, {
-                content: content.trim(),
-            });
+            let response;
+            if (file) {
+                const formData = new FormData();
+                if (content?.trim()) formData.append('content', content.trim());
+                formData.append(fileType === 'image' ? 'image' : 'file', file);
+                if (savedReplyingTo) formData.append('reply_to_id', savedReplyingTo.id);
+                response = await axios.post(`/api/chat/${conversationId}/messages`, formData, {
+                    headers: { 'Content-Type': 'multipart/form-data' },
+                });
+            } else {
+                const data = { content: content.trim() };
+                if (savedReplyingTo) data.reply_to_id = savedReplyingTo.id;
+                response = await axios.post(`/api/chat/${conversationId}/messages`, data);
+            }
 
             const newMessage = response.data;
-            setMessages(prev => [...prev, newMessage]);
+            setMessages(prev => prev.map(m => m.id === tempId ? newMessage : m));
             return newMessage;
         } catch (err) {
+            setMessages(prev => prev.filter(m => m.id !== tempId));
+            setReplyingTo(savedReplyingTo);
             console.error('Failed to send message:', err);
             throw err;
         }
+    }, [conversationId, currentUser, replyingTo]);
+
+    const deleteMessage = useCallback(async (messageId) => {
+        if (!conversationId) return;
+
+        setMessages(prev => prev.map(m =>
+            m.id === messageId ? { ...m, deleted_at: new Date().toISOString(), content: 'Ce message a été supprimé' } : m
+        ));
+
+        try {
+            await axios.delete(`/api/chat/${conversationId}/messages/${messageId}`);
+        } catch (err) {
+            fetchMessages();
+            console.error('Failed to delete message:', err);
+        }
+    }, [conversationId, fetchMessages]);
+
+    const markAsRead = useCallback(async (messageId) => {
+        if (!conversationId) return;
+        try {
+            await axios.post(`/api/chat/${conversationId}/messages/${messageId}/read`);
+        } catch {
+            // Silent fail
+        }
     }, [conversationId]);
 
-    /**
-     * Send typing indicator (throttled)
-     */
     const sendTyping = useCallback(() => {
         if (!conversationId || typingThrottleRef.current) return;
 
@@ -64,47 +114,56 @@ export default function useChat(conversationId) {
             typingThrottleRef.current = null;
         }, 2000);
 
-        axios.post(`/api/chat/${conversationId}/typing`).catch(() => {
-            // Silent fail for typing indicator
-        });
+        axios.post(`/api/chat/${conversationId}/typing`).catch(() => {});
     }, [conversationId]);
 
-    /**
-     * Setup Echo listeners for real-time updates
-     */
     useEffect(() => {
         if (!conversationId || !window.Echo) return;
 
-        // Initial fetch
         fetchMessages();
 
         const channel = window.Echo.private(`conversation.${conversationId}`);
 
-        // Listen for new messages
         channel.listen('.message.sent', (e) => {
-            console.log('💬 New message received:', e);
             setMessages(prev => [...prev, {
                 id: e.id,
                 conversation_id: e.conversation_id,
                 user_id: e.user_id,
                 content: e.content,
+                type: e.type || 'text',
+                file_path: e.file_path,
+                file_name: e.file_name,
+                file_type: e.file_type,
+                file_size: e.file_size,
+                file_url: e.file_url,
+                reply_to: e.reply_to,
                 created_at: e.created_at,
                 user: { id: e.user_id, name: e.user_name },
             }]);
-
-            // Clear typing indicator for this user
             setTypingUsers(prev => prev.filter(u => u.user_id !== e.user_id));
         });
 
-        // Listen for typing indicators
+        channel.listen('.message.deleted', (e) => {
+            setMessages(prev => prev.map(m =>
+                m.id === e.message_id
+                    ? { ...m, deleted_at: new Date().toISOString(), content: 'Ce message a été supprimé' }
+                    : m
+            ));
+        });
+
+        channel.listen('.message.read', (e) => {
+            setReadReceipts(prev => ({
+                ...prev,
+                [e.message_id]: { user_id: e.user_id, read_at: new Date().toISOString() },
+            }));
+        });
+
         channel.listen('.user.typing', (e) => {
-            console.log('⌨️ User typing:', e);
             setTypingUsers(prev => {
                 if (prev.find(u => u.user_id === e.user_id)) return prev;
                 return [...prev, { user_id: e.user_id, user_name: e.user_name }];
             });
 
-            // Auto-clear typing after 3 seconds
             if (typingTimeoutRef.current[e.user_id]) {
                 clearTimeout(typingTimeoutRef.current[e.user_id]);
             }
@@ -114,13 +173,12 @@ export default function useChat(conversationId) {
             }, 3000);
         });
 
-        // Cleanup on unmount or conversation change
         return () => {
             channel.stopListening('.message.sent');
+            channel.stopListening('.message.deleted');
+            channel.stopListening('.message.read');
             channel.stopListening('.user.typing');
             window.Echo.leave(`conversation.${conversationId}`);
-
-            // Clear all typing timeouts
             Object.values(typingTimeoutRef.current).forEach(clearTimeout);
             typingTimeoutRef.current = {};
         };
@@ -131,7 +189,12 @@ export default function useChat(conversationId) {
         loading,
         error,
         typingUsers,
+        replyingTo,
+        setReplyingTo,
+        readReceipts,
         sendMessage,
+        deleteMessage,
+        markAsRead,
         sendTyping,
         refresh: fetchMessages,
     };
