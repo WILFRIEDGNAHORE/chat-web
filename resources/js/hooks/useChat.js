@@ -25,7 +25,7 @@ export default function useChat(conversationId) {
             const response = await axios.get(`/api/chat/${conversationId}/messages`);
             // Cursor pagination returns data in desc order, reverse it
             const messagesData = response.data.data || [];
-            setMessages(messagesData.reverse());
+            setMessages(messagesData);
         } catch (err) {
             console.error('Failed to fetch messages:', err);
             setError('Erreur lors du chargement des messages');

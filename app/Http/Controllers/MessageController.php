@@ -29,7 +29,7 @@ class MessageController extends Controller
 
         $messages = $conversation->messages()
             ->with('user:id,name')
-            ->orderByDesc('created_at')
+            ->orderBy('created_at')
             ->cursorPaginate(50);
 
         // Update last_read_at
