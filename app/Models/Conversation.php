@@ -2,77 +2,82 @@
 
 namespace App\Models;
 
+use Illuminate\Database\Eloquent\Concerns\HasUuids;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
+use Illuminate\Database\Eloquent\Relations\BelongsToMany;
+use Illuminate\Database\Eloquent\Relations\HasMany;
+use Illuminate\Database\Eloquent\Relations\HasOne;
 
-/**
- * Modèle Conversation — représente une discussion entre 2 (ou plus) utilisateurs.
- *
- * Une conversation contient :
- * - Des utilisateurs (via la table pivot conversation_user)
- * - Des messages (chaque message appartient à une conversation)
- */
 class Conversation extends Model
 {
-    use HasFactory;
+    use HasFactory, HasUuids;
+
+    protected $fillable = [
+        'type',
+        'name',
+    ];
 
     /**
-     * Champs autorisés pour la création/modification en masse.
-     * Seul le titre peut être défini via Conversation::create(['title' => '...']).
+     * Get the users participating in this conversation.
      */
-    protected $fillable = ['title'];
-
-    /**
-     * Relation many-to-many : une conversation a PLUSIEURS utilisateurs.
-     * La table pivot "conversation_user" stocke les liens conversation_id <-> user_id.
-     *
-     * Exemple d'utilisation :
-     *   $conversation->users          → tous les utilisateurs de cette conversation
-     *   $conversation->users()->attach($userId)  → ajouter un utilisateur
-     */
-    public function users()
+    public function users(): BelongsToMany
     {
-        return $this->belongsToMany(User::class, 'conversation_user');
+        return $this->belongsToMany(User::class, 'conversation_user')
+            ->withPivot('last_read_at')
+            ->withTimestamps();
     }
 
     /**
-     * Relation one-to-many : une conversation contient PLUSIEURS messages.
-     * Les messages sont triés par date de création (du plus ancien au plus récent).
-     *
-     * Exemple : $conversation->messages → tous les messages triés chronologiquement
+     * Get all messages in this conversation.
      */
-    public function messages()
+    public function messages(): HasMany
     {
         return $this->hasMany(Message::class)->orderBy('created_at');
     }
 
     /**
-     * Relation one-to-one : récupère le DERNIER message de la conversation.
-     * latestOfMany() prend automatiquement le message le plus récent.
-     *
-     * Utilisé dans la sidebar pour afficher un aperçu du dernier message.
-     * Exemple : $conversation->lastMessage?->content → "Salut !"
+     * Get the latest message in this conversation.
      */
-    public function lastMessage()
+    public function latestMessage(): HasOne
     {
         return $this->hasOne(Message::class)->latestOfMany();
     }
 
     /**
-     * Compte le nombre de messages NON LUS dans cette conversation pour un utilisateur.
-     *
-     * Logique :
-     * - On ne compte que les messages envoyés par les AUTRES utilisateurs (pas les siens)
-     * - On ne compte que ceux dont read_at est null (pas encore lus)
-     *
-     * @param int $userId  L'ID de l'utilisateur qui regarde la conversation
-     * @return int  Le nombre de messages non lus
+     * Get the count of unread messages for a specific user.
      */
-    public function unreadCount($userId)
+    public function unreadMessagesCount(string $userId): int
     {
-        return $this->messages()
-            ->where('user_id', '!=', $userId)  // Messages des AUTRES, pas les miens
-            ->whereNull('read_at')              // Qui n'ont PAS été lus
-            ->count();                          // On compte combien il y en a
+        $pivot = $this->users()->where('user_id', $userId)->first()?->pivot;
+        $lastRead = $pivot?->last_read_at;
+
+        $query = $this->messages()->where('user_id', '!=', $userId);
+
+        if ($lastRead) {
+            $query->where('created_at', '>', $lastRead);
+        }
+
+        return $query->count();
+    }
+
+    /**
+     * Check if a user is a participant of this conversation.
+     */
+    public function hasParticipant(string $userId): bool
+    {
+        return $this->users()->where('user_id', $userId)->exists();
+    }
+
+    /**
+     * Get the other user in a private conversation.
+     */
+    public function getOtherUser(string $currentUserId): ?User
+    {
+        if ($this->type !== 'private') {
+            return null;
+        }
+
+        return $this->users->firstWhere('id', '!=', $currentUserId);
     }
 }

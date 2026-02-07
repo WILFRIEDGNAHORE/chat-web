@@ -2,55 +2,46 @@
 
 namespace App\Events;
 
-use Illuminate\Broadcasting\Channel;
+use Illuminate\Broadcasting\InteractsWithSockets;
 use Illuminate\Broadcasting\PrivateChannel;
 use Illuminate\Contracts\Broadcasting\ShouldBroadcastNow;
+use Illuminate\Foundation\Events\Dispatchable;
+use Illuminate\Queue\SerializesModels;
 
-/**
- * Event Typing — déclenché quand un utilisateur est en train d'écrire.
- *
- * Permet d'afficher "Jean est en train d'écrire..." en temps réel
- * chez les autres participants de la conversation.
- *
- * ShouldBroadcastNow = envoyé immédiatement à Pusher (pas de queue).
- */
 class Typing implements ShouldBroadcastNow
 {
-    /** L'ID de la conversation dans laquelle l'utilisateur tape */
-    public $conversation_id;
+    use Dispatchable, InteractsWithSockets, SerializesModels;
 
-    /** Les informations de l'utilisateur qui tape (id + name) */
-    public $user;
+    public function __construct(
+        public string $conversationId,
+        public string $userId,
+        public string $userName
+    ) {}
 
     /**
-     * Constructeur : reçoit l'ID de la conversation et l'objet User.
-     * On ne garde que l'id et le name de l'utilisateur (pas tout l'objet)
-     * car c'est tout ce dont le frontend a besoin.
+     * Get the channels the event should broadcast on.
      */
-    public function __construct($conversation_id, $user)
+    public function broadcastOn(): array
     {
-        $this->conversation_id = $conversation_id;
-        $this->user = ['id' => $user->id, 'name' => $user->name];
+        return [new PrivateChannel('conversation.' . $this->conversationId)];
     }
 
     /**
-     * Sur quel channel envoyer cet event ?
-     * Même channel privé que MessageSent : la conversation concernée.
+     * The event's broadcast name.
      */
-    public function broadcastOn()
+    public function broadcastAs(): string
     {
-        return new PrivateChannel('conversation.' . $this->conversation_id);
+        return 'user.typing';
     }
 
     /**
-     * Données envoyées au frontend via Pusher.
-     * Le JavaScript recevra : { user_id: 3, user_name: "Jean" }
+     * Get the data to broadcast.
      */
-    public function broadcastWith()
+    public function broadcastWith(): array
     {
         return [
-            'user_id' => $this->user['id'],
-            'user_name' => $this->user['name'],
+            'user_id' => $this->userId,
+            'user_name' => $this->userName,
         ];
     }
 }

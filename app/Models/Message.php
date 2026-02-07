@@ -2,44 +2,57 @@
 
 namespace App\Models;
 
+use Illuminate\Database\Eloquent\Concerns\HasUuids;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
+use Illuminate\Database\Eloquent\Relations\BelongsTo;
 
-/**
- * Modèle Message — représente un message envoyé dans une conversation.
- *
- * Chaque message :
- * - Appartient à UNE conversation (conversation_id)
- * - A été écrit par UN utilisateur (user_id)
- * - Contient du texte (content)
- * - Peut avoir été lu ou non (read_at : null = pas lu, date = lu à cette date)
- */
 class Message extends Model
 {
-    use HasFactory;
+    use HasFactory, HasUuids;
+
+    protected $fillable = [
+        'conversation_id',
+        'user_id',
+        'content',
+        'read_at',
+    ];
+
+    protected $casts = [
+        'read_at' => 'datetime',
+    ];
 
     /**
-     * Champs autorisés pour la création en masse via Message::create([...]).
-     * On autorise : conversation_id, user_id, content, read_at.
+     * Get the conversation this message belongs to.
      */
-    protected $fillable = ['conversation_id', 'user_id', 'content', 'read_at'];
-
-    /**
-     * Relation many-to-one : ce message appartient à UNE conversation.
-     * Exemple : $message->conversation → l'objet Conversation associé
-     */
-    public function conversation()
+    public function conversation(): BelongsTo
     {
         return $this->belongsTo(Conversation::class);
     }
 
     /**
-     * Relation many-to-one : ce message a été écrit par UN utilisateur.
-     * Exemple : $message->user → l'objet User qui a écrit ce message
-     * Exemple : $message->user->name → "Jean Dupont"
+     * Get the user who sent this message.
      */
-    public function user()
+    public function user(): BelongsTo
     {
         return $this->belongsTo(User::class);
+    }
+
+    /**
+     * Check if this message has been read.
+     */
+    public function isRead(): bool
+    {
+        return $this->read_at !== null;
+    }
+
+    /**
+     * Mark this message as read.
+     */
+    public function markAsRead(): void
+    {
+        if (!$this->isRead()) {
+            $this->update(['read_at' => now()]);
+        }
     }
 }

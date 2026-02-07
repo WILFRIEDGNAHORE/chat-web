@@ -2,7 +2,7 @@
 
 namespace App\Models;
 
-// use Illuminate\Contracts\Auth\MustVerifyEmail;
+use Illuminate\Database\Eloquent\Concerns\HasUuids;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Foundation\Auth\User as Authenticatable;
 use Illuminate\Notifications\Notifiable;
@@ -11,20 +11,13 @@ use Illuminate\Database\Eloquent\Relations\HasMany;
 
 /**
  * Modèle User — représente un utilisateur de l'application.
- *
- * Chaque utilisateur peut :
- * - Participer à plusieurs conversations (relation many-to-many)
- * - Envoyer plusieurs messages (relation one-to-many)
  */
 class User extends Authenticatable
 {
-    /** @use HasFactory<\Database\Factories\UserFactory> */
-    use HasFactory, Notifiable;
+    use HasFactory, Notifiable, HasUuids; // ✅ Ajout de HasUuids
 
     /**
-     * Champs que l'on peut remplir via User::create([...]) ou $user->fill([...]).
-     * Cela protège contre les modifications non autorisées (ex: un utilisateur
-     * ne peut pas se définir "admin" en envoyant un champ supplémentaire).
+     * Champs remplissables via User::create([...])
      */
     protected $fillable = [
         'name',
@@ -33,8 +26,13 @@ class User extends Authenticatable
     ];
 
     /**
-     * Champs cachés quand on transforme le modèle en JSON (ex: dans les réponses API).
-     * Le mot de passe et le token "remember me" ne doivent jamais être exposés.
+     * UUID configuration
+     */
+    protected $keyType = 'string';
+    public $incrementing = false;
+
+    /**
+     * Champs cachés en JSON
      */
     protected $hidden = [
         'password',
@@ -42,9 +40,7 @@ class User extends Authenticatable
     ];
 
     /**
-     * Transformations automatiques des colonnes de la base de données :
-     * - email_verified_at : stocké comme string en base → converti en objet Carbon (date)
-     * - password : automatiquement hashé quand on fait $user->password = 'texte'
+     * Transformations automatiques
      */
     protected function casts(): array
     {
@@ -55,22 +51,19 @@ class User extends Authenticatable
     }
 
     /**
-     * Relation many-to-many : un utilisateur participe à PLUSIEURS conversations,
-     * et une conversation a PLUSIEURS utilisateurs.
-     *
-     * La table pivot "conversation_user" fait le lien entre les deux.
-     * withTimestamps() enregistre automatiquement quand le lien a été créé.
+     * Relation many-to-many : conversations
      */
-    public function conversations()
+    public function conversations(): BelongsToMany
     {
-        return $this->belongsToMany(Conversation::class)->withTimestamps();
+        return $this->belongsToMany(Conversation::class, 'conversation_user')
+            ->withPivot('last_read_at')
+            ->withTimestamps();
     }
 
     /**
-     * Relation one-to-many : un utilisateur a écrit PLUSIEURS messages.
-     * Chaque message a un user_id qui pointe vers cet utilisateur.
+     * Relation one-to-many : messages envoyés
      */
-    public function messages()
+    public function messages(): HasMany
     {
         return $this->hasMany(Message::class);
     }
